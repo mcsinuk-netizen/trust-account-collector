@@ -1,0 +1,48 @@
+name: Windows x64 build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["*.zip", ".github/workflows/*.yml"]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Validate and extract generic source archive
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem TrustCollector_Source_*.zip | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $archive) { throw "Source archive missing" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($archive.FullName)
+          try {
+            foreach ($entry in $zip.Entries) {
+              if ($entry.FullName -match "(^|/)(private|\.venv|\.git|runtime)(/|$)|(^|/)\.\.(/|$)") { throw "Forbidden source entry" }
+            }
+          } finally { $zip.Dispose() }
+          Expand-Archive $archive.FullName source
+      - name: Native Windows tests, PyInstaller and frozen EXE smoke
+        shell: pwsh
+        run: |
+          Set-Location source
+          python -m venv .build-venv
+          ./scripts/build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-reports
+          path: source/reports/windows-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TrustCollector-Windows-x64
+          path: source/dist/TrustCollector-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
